@@ -14,7 +14,7 @@ use notify::{DebouncedEvent::*, RecursiveMode::*, Watcher};
 use std::{
     io,
     path::Path,
-    process::{Command, Output},
+    process::{exit, Command, Output, Stdio},
     sync::mpsc::channel,
     thread::sleep,
     time::{Duration, Instant},
@@ -96,11 +96,12 @@ async fn handle_request<B>(
 
 fn rustdoc(package: &Option<String>) -> io::Result<Output> {
     let mut cmd = Command::new("cargo");
+    cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
     cmd.args(&["doc", "--no-deps"]);
     if let Some(p) = package {
         cmd.args(&["-p", p.as_ref()]);
     }
-    cmd.output()
+    cmd.spawn()?.wait_with_output()
 }
 
 #[tokio::main]
@@ -108,7 +109,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
     let Opts { package } = Opts::from_args();
     let start = Instant::now();
-    rustdoc(&package)?;
+    if !rustdoc(&package)?.status.success() {
+        error!("cargo doc failed");
+        exit(1);
+    };
     // send file change notice to handlers
     let (ctx, _) = broadcast::channel::<String>(100);
     let sse = ctx.clone();
@@ -130,14 +134,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(w) => w,
         Err(e) => {
             error!("Error while trying to watch the files:\n\n\t{}", e);
-            std::process::exit(1)
+            exit(1)
         }
     };
 
     // watch sources to know when to trigger rustdoc
     if let Err(e) = watcher.watch("src", Recursive) {
         error!("Error while watching src:\n    {:?}", e);
-        std::process::exit(1);
+        exit(1);
     };
 
     // watch reloadables to know when to reload browser
@@ -187,7 +191,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Doc server running on http://{}/", addr);
     debug!("Started in {:?}", Instant::now() - start);
-    opener::open(format!("http://{}/", addr.to_string()))?;
+    opener::open(format!(
+        "http://{}/{}/",
+        addr.to_string(),
+        env!("CARGO_PKG_NAME")
+    ))?;
     server.await?;
     Ok(())
 }

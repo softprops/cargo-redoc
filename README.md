@@ -25,3 +25,13 @@
 </div>
 
 <br />
+
+## Install
+
+You can install cargo-redoc with cargo
+
+```sh
+$ cargo install cargo-redoc
+```
+
+Doug Tangren (softprops) 
