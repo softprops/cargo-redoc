@@ -15,6 +15,7 @@ use std::{
     io,
     path::Path,
     process::{exit, Command, Output, Stdio},
+    str::from_utf8,
     sync::mpsc::channel,
     thread::sleep,
     time::{Duration, Instant},
@@ -34,7 +35,7 @@ fn script() -> &'static str {
     "<script async>new EventSource('/_').onmessage = _ => location.reload();</script>"
 }
 
-fn inject_script(html: &str) -> Result<String, RewritingError> {
+fn inject(html: &str) -> Result<String, RewritingError> {
     rewrite_str(
         html,
         RewriteStrSettings {
@@ -48,7 +49,7 @@ fn inject_script(html: &str) -> Result<String, RewritingError> {
     )
 }
 
-async fn handle_request<B>(
+async fn handle<B>(
     req: Request<B>,
     static_: Static,
     changes: broadcast::Receiver<String>,
@@ -77,7 +78,7 @@ async fn handle_request<B>(
             info!("injecting script into {}", html);
             let mut response = static_.clone().serve(req).await?;
             use hyper::body::Buf;
-            let injected = inject_script(std::str::from_utf8(
+            let injected = inject(from_utf8(
                 hyper::body::aggregate(response.body_mut()).await?.bytes(),
             )?)
             .expect("failed to rewrite body");
@@ -123,7 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let static_ = static_.clone();
         let sse = sse.clone();
         future::ok::<_, hyper::Error>(service_fn(move |req| {
-            handle_request(req, static_.clone(), sse.subscribe())
+            handle(req, static_.clone(), sse.subscribe())
         }))
     }));
 
@@ -194,7 +195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     opener::open(format!(
         "http://{}/{}/",
         addr.to_string(),
-        env!("CARGO_PKG_NAME")
+        env!("CARGO_PKG_NAME").replace("-", "_")
     ))?;
     server.await?;
     Ok(())
@@ -205,7 +206,7 @@ mod tests {
     use super::*;
     #[test]
     fn script_is_injected() -> Result<(), Box<dyn std::error::Error>> {
-        let html = inject_script(r#"<html><body><p>hi</p><body></html>"#)?;
+        let html = inject(r#"<html><body><p>hi</p><body></html>"#)?;
 
         assert_eq!(
             html,
